@@ -117,6 +117,9 @@ tr.me td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
 .err{background:var(--bad-soft)}
 .stack{display:flex;flex-direction:column;gap:20px;min-width:0}
 footer{margin-top:28px;font-size:.78rem;color:var(--muted)}
+@keyframes flash{from{background:var(--accent-soft)}to{background:transparent}}
+#simTable.flash tbody{animation:flash .8s ease-out}
+.btn:disabled{opacity:.6;cursor:progress}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 
@@ -192,7 +195,7 @@ footer{margin-top:28px;font-size:.78rem;color:var(--muted)}
       <div class="stack">
         <div class="panel">
           <h2>Projected finish</h2>
-          <p class="sub" id="simSub">Your picks are locked in; every other game is simulated.</p>
+          <div id="simErr"></div><p class="sub" id="simSub">Your picks are locked in; every other game is simulated.</p>
           <div class="scroll"><table id="simTable"></table></div>
           <p class="note">Each team's weekly score is drawn from a normal distribution centred on its season scoring average (pulled toward the league average, plus your recent-form setting), with spread from the league's week-to-week variation. Picked winners are forced; typed scores are used exactly.</p>
         </div>
@@ -218,6 +221,7 @@ footer{margin-top:28px;font-size:.78rem;color:var(--muted)}
 <script>
 (() => {
 "use strict";
+window.addEventListener("error", e => { const m = document.querySelector("#msg"); if (m) m.innerHTML = `<div class="banner err">Something broke on this page: ${String(e.message).replace(/[<>&]/g,"")}</div>`; });
 // ---- Config: change LEAGUE_ID, or open the page with ?league=<id> ----
 const DEFAULT_LEAGUE_ID = "1366915864577708032";
 const SEEDS_BY_RECORD = 7;
@@ -328,7 +332,7 @@ function teamModels(formW){
   return {models, lgMean, lgSd};
 }
 
-function simulate(nSims, formW, usePicks){
+function simulate(nSims, formW, usePicks, seed){
   const {models} = teamModels(formW);
   const base = recordThrough(D.lastReg);
   const future = D.games.filter(g => !g.done);
@@ -336,7 +340,7 @@ function simulate(nSims, formW, usePicks){
   const out = {}; rids.forEach(r => out[r] = {seed:new Array(N+1).fill(0), top:0, eighth:0, pf:0, w:0});
   // per-game conditional tallies for focus swing: [aWins, aWinsAndFocusIn, bWins, bWinsAndFocusIn]
   const cond = {}; future.forEach(g => cond[g.week+":"+g.mid] = {aw:0, ai:{}, bw:0, bi:{}});
-  const rnd = mulberry32(20261117);
+  const rnd = mulberry32(seed == null ? 20261117 : seed);
   const gauss = () => { let u=0,v=0; while(u===0)u=rnd(); v=rnd(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); };
   const rec = {}; rids.forEach(r => rec[r] = {w:0,l:0,t:0,pf:0});
   const winners = new Array(future.length);
@@ -504,7 +508,26 @@ function renderSimResults(res){
 }
 
 let simTimer = null;
-function runSim(){ if (!D) return; const res = simulate(+$("#nSims").value, +$("#formW").value, true); renderSimResults(res); }
+let runCount = 0;
+function runSim(){
+  if (!D) return;
+  const btn = $("#runSim"); btn.disabled = true; btn.textContent = "Running…";
+  // let the button repaint before the heavy loop
+  setTimeout(() => {
+    try {
+      runCount++;
+      const seed = (Date.now() ^ (runCount * 2654435761)) >>> 0;
+      const res = simulate(+$("#nSims").value, +$("#formW").value, true, seed);
+      renderSimResults(res);
+      $("#simSub").textContent += ` Run #${runCount} at ${new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit",second:"2-digit"})}.`;
+      const tb = $("#simTable"); tb.classList.remove("flash"); void tb.offsetWidth; tb.classList.add("flash");
+      $("#simErr").innerHTML = "";
+    } catch (e) {
+      console.error(e);
+      $("#simErr").innerHTML = `<div class="banner err">The simulation hit an error: ${esc(e && e.message || e)}. Press Refresh from Sleeper and try again.</div>`;
+    } finally { btn.disabled = false; btn.textContent = "Run simulation"; }
+  }, 30);
+}
 function queueSim(){ clearTimeout(simTimer); simTimer = setTimeout(runSim, 250); }
 
 function savePicks(){ store.set("picks:"+leagueId+":"+D.league.season, JSON.stringify(picks)); }
