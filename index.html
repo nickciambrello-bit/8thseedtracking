@@ -130,6 +130,21 @@ footer{margin-top:28px;font-size:.78rem;color:var(--muted)}
 .path li{line-height:1.4}
 .path li b{font-weight:600}
 .path .fine{font-size:.78rem;color:var(--muted);margin:0}
+.board td,.board th{vertical-align:top}
+.board td.wk{min-width:118px;font-size:.78rem;line-height:1.3;padding:6px 8px}
+.board td.wk b{display:block;font-size:.72rem;font-family:var(--mono);letter-spacing:.04em;text-transform:uppercase}
+.board td.wk span{display:block;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px}
+.h-win{background:var(--good-soft)} .h-win b{color:var(--good)}
+.h-loss{background:var(--accent-soft)} .h-loss b{color:var(--accent)}
+.h-either{background:var(--panel-2)} .h-either b{color:var(--muted)}
+.recgrid td.rc{text-align:center;min-width:92px;padding:6px 6px;line-height:1.25}
+.recgrid td.rc big{display:block;font-family:var(--display);font-size:1.25rem;font-weight:700}
+.recgrid td.rc small{display:block;font-family:var(--mono);font-size:.66rem;color:var(--muted)}
+.recgrid td.rc em{font-style:normal;font-family:var(--mono);font-size:.72rem}
+.wkl{width:100%;border-collapse:collapse;font-size:.8rem}
+.wkl td{padding:5px 6px;border-bottom:1px solid var(--line);white-space:normal;vertical-align:top}
+.wkl td:first-child{font-family:var(--mono);color:var(--muted);white-space:nowrap}
+.chip2{display:inline-block;padding:1px 6px;border-radius:4px;font-family:var(--mono);font-size:.7rem;font-weight:500;white-space:nowrap}
 @keyframes flash{from{background:var(--accent-soft)}to{background:transparent}}
 #simTable.flash tbody{animation:flash .8s ease-out}
 .btn:disabled{opacity:.6;cursor:progress}
@@ -229,6 +244,17 @@ footer{margin-top:28px;font-size:.78rem;color:var(--muted)}
 
   <section id="view-path" hidden>
     <p class="sub" id="pathSub" style="max-width:80ch">What has to happen for each team to end up with seed 8.</p>
+    <div class="panel" style="margin-bottom:20px">
+      <h2>Scenario board</h2>
+      <p class="sub">One row per team still chasing seed 8. Each week shows the opponent, the result that shows up most in that team's seed-8 seasons, and the score they typically post that week. "Loss helps" is about seed 8 only: a loss keeps a team out of the top 7, which is good for its seed 8 odds but not for its overall playoff odds. Check the record grid below for the full picture.</p>
+      <div class="scroll"><table class="board" id="board"></table></div>
+      <div class="legend"><span><i class="sw" style="background:var(--good-soft)"></i>Win helps</span><span><i class="sw" style="background:var(--accent-soft)"></i>A loss helps (keeps them out of the top 7)</span><span><i class="sw" style="background:var(--panel-2)"></i>Either result works</span></div>
+    </div>
+    <div class="panel" style="margin-bottom:20px">
+      <h2>What each final record gets you</h2>
+      <p class="sub">For teams whose playoff spot is still in doubt: the chance of making the playoffs for each possible final record, split into top-7 seed and seed 8. With four teams at 5-5, this is where the points-for tiebreaker and the seed 8 rule show up.</p>
+      <div class="scroll"><table class="recgrid" id="recGrid"></table></div>
+    </div>
     <div class="paths" id="paths"></div>
   </section>
 
@@ -364,7 +390,7 @@ function simulate(nSims, formW, usePicks, seed){
   const rec = {}; rids.forEach(r => rec[r] = {w:0,l:0,t:0,pf:0});
   const winners = new Array(future.length);
   const G = future.length, idx = {}; rids.forEach((r,i)=>idx[r]=i);
-  const simSeed = new Uint8Array(nSims*N), simPF = new Float32Array(nSims*N), simWin = new Uint8Array(nSims*Math.max(1,G));
+  const simSeed = new Uint8Array(nSims*N), simPF = new Float32Array(nSims*N), simWin = new Uint8Array(nSims*Math.max(1,G)), simSA = new Float32Array(nSims*Math.max(1,G)), simSB = new Float32Array(nSims*Math.max(1,G));
   for (let s=0; s<nSims; s++){
     rids.forEach(r => { const b=base[r], x=rec[r]; x.w=b.w; x.l=b.l; x.t=b.t; x.pf=b.pf; });
     for (let i=0;i<future.length;i++){
@@ -377,7 +403,7 @@ function simulate(nSims, formW, usePicks, seed){
         if (p.winner === g.a && sa <= sb){ if (!lockedA) sa = sb + 0.01 + rnd()*12; else if (!lockedB) sb = Math.max(30, sa - 0.01 - rnd()*12); }
         if (p.winner === g.b && sb <= sa){ if (!lockedB) sb = sa + 0.01 + rnd()*12; else if (!lockedA) sa = Math.max(30, sb - 0.01 - rnd()*12); }
       }
-      const A=rec[g.a], B=rec[g.b]; A.pf+=sa; B.pf+=sb;
+      const A=rec[g.a], B=rec[g.b]; A.pf+=sa; B.pf+=sb; simSA[s*G+i]=sa; simSB[s*G+i]=sb;
       if (sa>sb){A.w++;B.l++;winners[i]=1} else if (sb>sa){B.w++;A.l++;winners[i]=2} else {A.t++;B.t++;winners[i]=0}
     }
     const sd = seedTeams(rec, D.teams);
@@ -391,7 +417,7 @@ function simulate(nSims, formW, usePicks, seed){
     }
   }
   rids.forEach(r => { const o=out[r]; o.seed=o.seed.map(x=>x/nSims); o.top/=nSims; o.eighth/=nSims; o.pf/=nSims; o.w/=nSims; o.make=o.top+o.eighth; });
-  return {out, cond, future, n:nSims, N, G, rids, idx, simSeed, simPF, simWin};
+  return {out, cond, future, n:nSims, N, G, rids, idx, simSeed, simPF, simWin, simSA, simSB};
 }
 
 // ---------- Rendering helpers ----------
@@ -533,7 +559,7 @@ function renderSimResults(res){
 // ---------- Paths to the 8th seed ----------
 function median(arr){ if(!arr.length) return NaN; const a = Float64Array.from(arr).sort(); const m = a.length>>1; return a.length%2 ? a[m] : (a[m-1]+a[m])/2; }
 function renderPaths(res){
-  const E = SEEDS_BY_RECORD + 1, {N, G, n, rids, idx, simSeed, simPF, simWin, future} = res;
+  const E = SEEDS_BY_RECORD + 1, {N, G, n, rids, idx, simSeed, simPF, simWin, simSA, simSB, future} = res;
   const cur = recordThrough(D.lastScored), wl = D.lastReg - D.lastScored;
   const nowSd = seedTeams(cur, D.teams);
   const nm = r => esc(D.byRid[r].name);
@@ -542,6 +568,25 @@ function renderPaths(res){
   // baseline game results
   const baseA = new Float64Array(G); for (let s=0;s<n;s++) for (let i=0;i<G;i++) if (simWin[s*G+i]===1) baseA[i]++;
   for (let i=0;i<G;i++) baseA[i]/=n;
+  function weekPlan(T, S8){
+    const out = [];
+    future.forEach((g,i) => {
+      if (g.a !== T && g.b !== T) return;
+      const isA = g.a === T, opp = isA ? g.b : g.a;
+      let win = 0; const sc = [];
+      S8.forEach(s => { const w = simWin[s*G+i]; if ((isA && w===1) || (!isA && w===2)) win++; sc.push(isA ? simSA[s*G+i] : simSB[s*G+i]); });
+      const rate = win/S8.length, base = isA ? baseA[i] : 1-baseA[i];
+      const locked = base <= 0.001 || base >= 0.999;
+      const help = locked ? "either" : (rate - base >= 0.05 ? "win" : (base - rate >= 0.05 ? "loss" : "either"));
+      // best other game that same week
+      let root = null, best = 0.06;
+      future.forEach((h,j) => { if (h.week !== g.week || j === i || baseA[j] <= 0.001 || baseA[j] >= 0.999) return;
+        let ca = 0; S8.forEach(s => { if (simWin[s*G+j]===1) ca++; }); const lift = ca/S8.length - baseA[j];
+        if (Math.abs(lift) > best){ best = Math.abs(lift); root = lift > 0 ? {W:h.a, L:h.b} : {W:h.b, L:h.a}; } });
+      out.push({week:g.week, opp, rate: locked ? null : rate, help, helpTxt: locked ? (rate>0.5?"Picked: win":"Picked: loss") : (help==="win"?"Win":help==="loss"?"Loss helps":"Either"), score:median(sc), root});
+    });
+    return out;
+  }
   const cards = rids.map(T => {
     const ti = idx[T], o = res.out[T], t = D.byRid[T];
     const S8 = []; for (let s=0;s<n;s++) if (simSeed[s*N+ti]===E) S8.push(s);
@@ -556,28 +601,15 @@ function renderPaths(res){
     } else if (p8 < 0.01 && o.top >= 0.9){
       lead = `Almost certainly gets in as a top-7 seed (${pct(o.top)}). Seed 8 only comes into play if they collapse down the stretch.`; card.rank = 2;
     } else {
-      lead = `To get the 8th seed, ${nm(T)} needs to:`;
-      // 1. own scoring
-      const rem = S8.map(s => simPF[s*N+ti] - cur[T].pf);
-      const need = median(rem)/wl;
-      const avg = Object.keys(t.scores).length ? cur[T].pf/Object.keys(t.scores).length : need;
+      lead = `${nm(T)}'s path to the 8th seed, week by week:`;
+      // week-by-week scenario for this team
+      const weekly = weekPlan(T, S8);
+      card.weekly = weekly;
+      const rows = weekly.map(w => `<tr><td>Wk ${w.week}</td><td><span class="chip2 h-${w.help}">${w.helpTxt}</span> vs ${nm(w.opp)}${w.rate!=null?` <span class="mv">(${w.help==="loss"?"loses":"wins"} in ${pct(w.help==="loss"?1-w.rate:w.rate)} of these paths)</span>`:""}<br><span class="mv">Typical score ~${fmt(w.score,0)}${w.root?` · root for ${nm(w.root.W)} over ${nm(w.root.L)}`:""}</span></td></tr>`).join("");
       const finalPF = median(S8.map(s=>simPF[s*N+ti]));
-      items.push(`<b>Score about ${fmt(need)} a week</b> over the last ${wl} week${wl===1?"":"s"} (season average ${fmt(avg)}), finishing near ${fmt(finalPF,0)} total points.`);
-      // 2. rivals that block in PF terms
-      const rivals = [];
-      rids.forEach(R => { if (R===T) return; const ri = idx[R]; let block = 0;
-        for (let s=0;s<n;s++) if (simSeed[s*N+ri] > SEEDS_BY_RECORD && simPF[s*N+ri] > simPF[s*N+ti]) block++;
-        if (block/n >= 0.08) rivals.push({R, ri, block:block/n}); });
-      rivals.sort((a,b)=>b.block-a.block).slice(0,4).forEach(({R, ri}) => {
-        let inTop = 0; const margins = [];
-        S8.forEach(s => { if (simSeed[s*N+ri] <= SEEDS_BY_RECORD) inTop++; else margins.push(simPF[s*N+ti]-simPF[s*N+ri]); });
-        const a = inTop/S8.length, gap = cur[R].pf - cur[T].pf;
-        const gapTxt = gap > 0 ? `outscore ${nm(R)} by more than ${fmt(gap,2)} points over the last ${wl} week${wl===1?"":"s"}` : `stay ahead of ${nm(R)} in total points (currently up ${fmt(-gap,2)})`;
-        const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
-        if (a >= 0.85) items.push(`<b>${nm(R)} climbs into the top 7</b> by record. That happens in ${pct(a)} of these paths, so the points gap to them stops mattering.`);
-        else if (a <= 0.15) items.push(`<b>${cap(gapTxt)}</b>. In these paths they end up a median ${fmt(median(margins))} points ahead of ${nm(R)}.`);
-        else items.push(`Either <b>${gapTxt}</b>, or ${nm(R)} moves into the top 7 (${pct(a)} of these paths).`);
-      });
+      const avg = Object.keys(t.scores).length ? cur[T].pf/Object.keys(t.scores).length : 0;
+      card.finalPF = finalPF;
+      items.push(`<table class="wkl"><tbody>${rows}<tr><td>Final</td><td>Finish near <b>${fmt(finalPF,0)} PF</b> (about ${fmt((finalPF-cur[T].pf)/wl)} a week; season average ${fmt(avg)})</td></tr></tbody></table>`);
       // 3. results that help
       const cA = new Float64Array(G); S8.forEach(s => { for (let i=0;i<G;i++) if (simWin[s*G+i]===1) cA[i]++; });
       const swings = future.map((g,i) => ({g, c:cA[i]/S8.length, b:baseA[i]})).filter(x => Math.abs(x.c-x.b) >= 0.08 && x.b > 0.001 && x.b < 0.999)
@@ -597,11 +629,42 @@ function renderPaths(res){
     card.html = `<article class="path ${holds?"hold":""} ${card.rank>=2?"dim":""}">
       <div class="ph">${teamCell(t)}<div class="odds"><b>${S8.length || wl<=0 ? pct(p8) : "0%"}</b><small>Seed 8 odds</small></div></div>
       <div>${status} <span class="mv">${recStr(cur[T])} · ${fmt(cur[T].pf,2)} PF</span></div>
-      <p class="lead">${lead}</p>${items.length?`<ul>${items.map(i=>`<li>${i}</li>`).join("")}</ul>`:""}${fine?`<p class="fine">${fine}</p>`:""}</article>`;
+      <p class="lead">${lead}</p>${items.map(i=>i.startsWith("<table")?i:`<ul><li>${i}</li></ul>`).join("")}${fine?`<p class="fine">${fine}</p>`:""}</article>`;
     return card;
   });
   cards.sort((a,b) => (a.rank||1)-(b.rank||1) || b.p8-a.p8 || (b.holds?1:0)-(a.holds?1:0));
   $("#paths").innerHTML = cards.map(c=>c.html).join("");
+
+  // Scenario board
+  const weeks = [...new Set(future.map(g=>g.week))].sort((a,b)=>a-b);
+  const contenders = cards.filter(c => c.rank === 1 && c.weekly);
+  let bh = `<thead><tr><th>Team</th><th class="r">Seed 8</th><th class="r">Top 7</th>${weeks.map(w=>`<th>Week ${w}</th>`).join("")}<th class="r">Finish near</th></tr></thead><tbody>`;
+  contenders.forEach(c => { const t = D.byRid[c.T];
+    bh += `<tr class="${c.T===D.meRid?"me":""}"><td>${teamCell(t)}</td><td class="r pct">${pct(c.p8)}</td><td class="r pct">${pct(c.top)}</td>` +
+      weeks.map(w => { const x = c.weekly.find(y=>y.week===w); if (!x) return `<td class="wk h-either"><b>Bye</b></td>`;
+        return `<td class="wk h-${x.help}"><b>${x.helpTxt}</b><span title="${esc(D.byRid[x.opp].name)}">vs ${esc(D.byRid[x.opp].name)}</span><span>~${fmt(x.score,0)} pts${x.rate!=null?` · ${x.help==="loss"?"L":"W"} ${pct(x.help==="loss"?1-x.rate:x.rate)}`:""}</span></td>`; }).join("") +
+      `<td class="r num">${fmt(c.finalPF,0)}</td></tr>`; });
+  if (!contenders.length) bh += `<tr><td colspan="${weeks.length+4}" class="sub">No team has a live path to seed 8.</td></tr>`;
+  $("#board").innerHTML = bh + "</tbody>";
+
+  // Final record grid
+  const maxG = Math.max(0, ...rids.map(r => future.filter(g=>g.a===r||g.b===r).length));
+  const doubt = rids.filter(r => res.out[r].make > 0.005 && res.out[r].make < 0.995)
+    .sort((a,b) => (cur[b].w - cur[a].w) || (cur[b].pf - cur[a].pf));
+  let rg = `<thead><tr><th>Team</th><th class="c">Now</th>${Array.from({length:maxG+1},(_,k)=>`<th class="c">Win ${k} of ${maxG}</th>`).join("")}</tr></thead><tbody>`;
+  doubt.forEach(T => { const ti = idx[T]; const mine = future.map((g,i)=>({g,i})).filter(x=>x.g.a===T||x.g.b===T);
+    const cnt = new Array(maxG+1).fill(0), top = new Array(maxG+1).fill(0), e8 = new Array(maxG+1).fill(0);
+    for (let s=0;s<n;s++){ let k=0; mine.forEach(({g,i}) => { const w=simWin[s*G+i]; if ((g.a===T&&w===1)||(g.b===T&&w===2)) k++; });
+      cnt[k]++; const sd = simSeed[s*N+ti]; if (sd<=SEEDS_BY_RECORD) top[k]++; else if (sd===E) e8[k]++; }
+    rg += `<tr class="${T===D.meRid?"me":""}"><td>${teamCell(D.byRid[T])}</td><td class="c num">${recStr(cur[T])}</td>` + cnt.map((c,k) => {
+      if (k > mine.length) return `<td class="rc"><small>—</small></td>`;
+      const fr = `${cur[T].w+k}-${cur[T].l+mine.length-k}`;
+      if (c/n < 0.003) return `<td class="rc"><em>${fr}</em><small>rarely happens</small></td>`;
+      const pin = (top[k]+e8[k])/c;
+      const shade = `background:color-mix(in srgb, var(--good) ${Math.round(pin*38)}%, transparent)`;
+      return `<td class="rc" style="${shade}"><em>${fr}</em><big>${pct(pin)}</big><small>top-7 ${pct(top[k]/c)} · 8th ${pct(e8[k]/c)}</small><small>happens ${pct(c/n)}</small></td>`; }).join("") + "</tr>"; });
+  if (!doubt.length) rg += `<tr><td colspan="${maxG+3}" class="sub">Every playoff spot is settled.</td></tr>`;
+  $("#recGrid").innerHTML = rg + "</tbody>";
 }
 
 let simTimer = null;
