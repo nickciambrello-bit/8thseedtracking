@@ -117,6 +117,19 @@ tr.me td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
 .err{background:var(--bad-soft)}
 .stack{display:flex;flex-direction:column;gap:20px;min-width:0}
 footer{margin-top:28px;font-size:.78rem;color:var(--muted)}
+.paths{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));gap:16px}
+.path{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px;min-width:0;display:flex;flex-direction:column;gap:10px}
+.path.hold{border-color:var(--accent);box-shadow:inset 0 3px 0 var(--accent)}
+.path.dim{opacity:.72}
+.path .ph{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+.path .odds{text-align:right;flex:none}
+.path .odds b{font-family:var(--display);font-size:1.8rem;line-height:1;display:block;color:var(--accent)}
+.path .odds small{font-family:var(--mono);font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.path .lead{font-weight:600;margin:0}
+.path ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px}
+.path li{line-height:1.4}
+.path li b{font-weight:600}
+.path .fine{font-size:.78rem;color:var(--muted);margin:0}
 @keyframes flash{from{background:var(--accent-soft)}to{background:transparent}}
 #simTable.flash tbody{animation:flash .8s ease-out}
 .btn:disabled{opacity:.6;cursor:progress}
@@ -141,6 +154,7 @@ footer{margin-top:28px;font-size:.78rem;color:var(--muted)}
   <nav class="tabs" role="tablist">
     <button role="tab" id="tab-race" aria-selected="true" type="button">The Race</button>
     <button role="tab" id="tab-sim" aria-selected="false" type="button">Simulator</button>
+    <button role="tab" id="tab-path" aria-selected="false" type="button">Paths to 8th</button>
   </nav>
 
   <div class="rules">
@@ -211,6 +225,11 @@ footer{margin-top:28px;font-size:.78rem;color:var(--muted)}
         <div id="slate"></div>
       </div>
     </div>
+  </section>
+
+  <section id="view-path" hidden>
+    <p class="sub" id="pathSub" style="max-width:80ch">What has to happen for each team to end up with seed 8.</p>
+    <div class="paths" id="paths"></div>
   </section>
 
   <div id="msg"></div>
@@ -344,6 +363,8 @@ function simulate(nSims, formW, usePicks, seed){
   const gauss = () => { let u=0,v=0; while(u===0)u=rnd(); v=rnd(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); };
   const rec = {}; rids.forEach(r => rec[r] = {w:0,l:0,t:0,pf:0});
   const winners = new Array(future.length);
+  const G = future.length, idx = {}; rids.forEach((r,i)=>idx[r]=i);
+  const simSeed = new Uint8Array(nSims*N), simPF = new Float32Array(nSims*N), simWin = new Uint8Array(nSims*Math.max(1,G));
   for (let s=0; s<nSims; s++){
     rids.forEach(r => { const b=base[r], x=rec[r]; x.w=b.w; x.l=b.l; x.t=b.t; x.pf=b.pf; });
     for (let i=0;i<future.length;i++){
@@ -360,6 +381,8 @@ function simulate(nSims, formW, usePicks, seed){
       if (sa>sb){A.w++;B.l++;winners[i]=1} else if (sb>sa){B.w++;A.l++;winners[i]=2} else {A.t++;B.t++;winners[i]=0}
     }
     const sd = seedTeams(rec, D.teams);
+    for (let j=0;j<N;j++){ simSeed[s*N+j] = sd.seedOf[rids[j]]; simPF[s*N+j] = rec[rids[j]].pf; }
+    for (let i=0;i<G;i++) simWin[s*G+i] = winners[i];
     rids.forEach(r => { const o=out[r], seed=sd.seedOf[r]; o.seed[seed]++; if(seed<=SEEDS_BY_RECORD)o.top++; if(seed===SEEDS_BY_RECORD+1)o.eighth++; o.pf+=rec[r].pf; o.w+=rec[r].w; });
     for (let i=0;i<future.length;i++){
       const c = cond[future[i].week+":"+future[i].mid];
@@ -368,7 +391,7 @@ function simulate(nSims, formW, usePicks, seed){
     }
   }
   rids.forEach(r => { const o=out[r]; o.seed=o.seed.map(x=>x/nSims); o.top/=nSims; o.eighth/=nSims; o.pf/=nSims; o.w/=nSims; o.make=o.top+o.eighth; });
-  return {out, cond, future, n:nSims};
+  return {out, cond, future, n:nSims, N, G, rids, idx, simSeed, simPF, simWin};
 }
 
 // ---------- Rendering helpers ----------
@@ -507,6 +530,80 @@ function renderSimResults(res){
   $("#swingTable").innerHTML = s + `</tbody><tfoot><tr><td colspan="5" class="sub" style="border:0">Overall right now: ${pct(base)} to make the playoffs. Rows sorted by how much the result moves it.</td></tr></tfoot>`;
 }
 
+// ---------- Paths to the 8th seed ----------
+function median(arr){ if(!arr.length) return NaN; const a = Float64Array.from(arr).sort(); const m = a.length>>1; return a.length%2 ? a[m] : (a[m-1]+a[m])/2; }
+function renderPaths(res){
+  const E = SEEDS_BY_RECORD + 1, {N, G, n, rids, idx, simSeed, simPF, simWin, future} = res;
+  const cur = recordThrough(D.lastScored), wl = D.lastReg - D.lastScored;
+  const nowSd = seedTeams(cur, D.teams);
+  const nm = r => esc(D.byRid[r].name);
+  const nPicked = Object.values(picks).filter(p=>p.winner || (p.scores && Object.keys(p.scores).length)).length;
+  $("#pathSub").textContent = `What has to happen for each team to end up with seed 8, worked out from ${n.toLocaleString()} simulations of weeks ${D.lastScored+1}–${D.lastReg}` + (nPicked ? `, with your ${nPicked} pick${nPicked===1?"":"s"} from the Simulator locked in.` : ".") + " The percentages say how often each thing happened in the seasons where that team took seed 8.";
+  // baseline game results
+  const baseA = new Float64Array(G); for (let s=0;s<n;s++) for (let i=0;i<G;i++) if (simWin[s*G+i]===1) baseA[i]++;
+  for (let i=0;i<G;i++) baseA[i]/=n;
+  const cards = rids.map(T => {
+    const ti = idx[T], o = res.out[T], t = D.byRid[T];
+    const S8 = []; for (let s=0;s<n;s++) if (simSeed[s*N+ti]===E) S8.push(s);
+    const p8 = S8.length/n, holds = nowSd.eighth === T;
+    const card = {T, p8, holds, top:o.top, html:""};
+    let items = [], lead = "", fine = "";
+    if (wl <= 0){
+      lead = holds ? "Season's over. They have the 8th seed." : "Season's over. The 8th seed went elsewhere.";
+    } else if (!S8.length){
+      if (o.top >= 0.995){ lead = "On track for a top-7 seed by record, so the 8th seed race doesn't apply."; card.rank = 2; }
+      else { lead = `Seed 8 didn't happen for them in any of ${n.toLocaleString()} simulations.`; fine = o.top > 0.005 ? `Their way in is a top-7 seed by record (${pct(o.top)}).` : "They need a historic scoring run while every team ahead of them stalls."; card.rank = 3; }
+    } else if (p8 < 0.01 && o.top >= 0.9){
+      lead = `Almost certainly gets in as a top-7 seed (${pct(o.top)}). Seed 8 only comes into play if they collapse down the stretch.`; card.rank = 2;
+    } else {
+      lead = `To get the 8th seed, ${nm(T)} needs to:`;
+      // 1. own scoring
+      const rem = S8.map(s => simPF[s*N+ti] - cur[T].pf);
+      const need = median(rem)/wl;
+      const avg = Object.keys(t.scores).length ? cur[T].pf/Object.keys(t.scores).length : need;
+      const finalPF = median(S8.map(s=>simPF[s*N+ti]));
+      items.push(`<b>Score about ${fmt(need)} a week</b> over the last ${wl} week${wl===1?"":"s"} (season average ${fmt(avg)}), finishing near ${fmt(finalPF,0)} total points.`);
+      // 2. rivals that block in PF terms
+      const rivals = [];
+      rids.forEach(R => { if (R===T) return; const ri = idx[R]; let block = 0;
+        for (let s=0;s<n;s++) if (simSeed[s*N+ri] > SEEDS_BY_RECORD && simPF[s*N+ri] > simPF[s*N+ti]) block++;
+        if (block/n >= 0.08) rivals.push({R, ri, block:block/n}); });
+      rivals.sort((a,b)=>b.block-a.block).slice(0,4).forEach(({R, ri}) => {
+        let inTop = 0; const margins = [];
+        S8.forEach(s => { if (simSeed[s*N+ri] <= SEEDS_BY_RECORD) inTop++; else margins.push(simPF[s*N+ti]-simPF[s*N+ri]); });
+        const a = inTop/S8.length, gap = cur[R].pf - cur[T].pf;
+        const gapTxt = gap > 0 ? `outscore ${nm(R)} by more than ${fmt(gap,2)} points over the last ${wl} week${wl===1?"":"s"}` : `stay ahead of ${nm(R)} in total points (currently up ${fmt(-gap,2)})`;
+        const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+        if (a >= 0.85) items.push(`<b>${nm(R)} climbs into the top 7</b> by record. That happens in ${pct(a)} of these paths, so the points gap to them stops mattering.`);
+        else if (a <= 0.15) items.push(`<b>${cap(gapTxt)}</b>. In these paths they end up a median ${fmt(median(margins))} points ahead of ${nm(R)}.`);
+        else items.push(`Either <b>${gapTxt}</b>, or ${nm(R)} moves into the top 7 (${pct(a)} of these paths).`);
+      });
+      // 3. results that help
+      const cA = new Float64Array(G); S8.forEach(s => { for (let i=0;i<G;i++) if (simWin[s*G+i]===1) cA[i]++; });
+      const swings = future.map((g,i) => ({g, c:cA[i]/S8.length, b:baseA[i]})).filter(x => Math.abs(x.c-x.b) >= 0.08 && x.b > 0.001 && x.b < 0.999)
+        .sort((x,y)=>Math.abs(y.c-y.b)-Math.abs(x.c-x.b)).slice(0,3);
+      if (swings.length){
+        const lines = swings.map(x => { const aWins = x.c > x.b; const W = aWins ? x.g.a : x.g.b, L = aWins ? x.g.b : x.g.a;
+          const pc = aWins ? x.c : 1-x.c, pb = aWins ? x.b : 1-x.b;
+          const who = W===T ? `<b>beat ${nm(L)}</b>` : (L===T ? `<b>a loss to ${nm(W)}</b> (it keeps them out of the top 7)` : `<b>${nm(W)} beats ${nm(L)}</b>`);
+          return `Week ${x.g.week}: ${who}, which happens in ${pct(pc)} of these paths vs ${pct(pb)} overall`; });
+        items.push(`Get help from these results:<ul>${lines.map(l=>`<li>${l}</li>`).join("")}</ul>`);
+      }
+      if (o.top >= 0.2) fine = `They're more likely to get in as a top-7 seed (${pct(o.top)}). This is their backup route.`;
+      else if (p8 < 0.02) fine = `This is a long shot. It happened in only ${S8.length.toLocaleString()} of ${n.toLocaleString()} simulations, so treat the details as rough.`;
+      card.rank = 1;
+    }
+    const status = holds ? `<span class="pill eight">Holds seed 8 now</span>` : (nowSd.seedOf[T] <= SEEDS_BY_RECORD ? `<span class="pill in">Seed ${nowSd.seedOf[T]} now</span>` : `<span class="pill out">${fmt(cur[nowSd.eighth].pf - cur[T].pf,2)} PF back</span>`);
+    card.html = `<article class="path ${holds?"hold":""} ${card.rank>=2?"dim":""}">
+      <div class="ph">${teamCell(t)}<div class="odds"><b>${S8.length || wl<=0 ? pct(p8) : "0%"}</b><small>Seed 8 odds</small></div></div>
+      <div>${status} <span class="mv">${recStr(cur[T])} · ${fmt(cur[T].pf,2)} PF</span></div>
+      <p class="lead">${lead}</p>${items.length?`<ul>${items.map(i=>`<li>${i}</li>`).join("")}</ul>`:""}${fine?`<p class="fine">${fine}</p>`:""}</article>`;
+    return card;
+  });
+  cards.sort((a,b) => (a.rank||1)-(b.rank||1) || b.p8-a.p8 || (b.holds?1:0)-(a.holds?1:0));
+  $("#paths").innerHTML = cards.map(c=>c.html).join("");
+}
+
 let simTimer = null;
 let runCount = 0;
 function runSim(){
@@ -519,6 +616,7 @@ function runSim(){
       const seed = (Date.now() ^ (runCount * 2654435761)) >>> 0;
       const res = simulate(+$("#nSims").value, +$("#formW").value, true, seed);
       renderSimResults(res);
+      renderPaths(res);
       $("#simSub").textContent += ` Run #${runCount} at ${new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit",second:"2-digit"})}.`;
       const tb = $("#simTable"); tb.classList.remove("flash"); void tb.offsetWidth; tb.classList.add("flash");
       $("#simErr").innerHTML = "";
@@ -534,14 +632,14 @@ function savePicks(){ store.set("picks:"+leagueId+":"+D.league.season, JSON.stri
 
 // ---------- Events ----------
 function setTab(which){
-  const race = which !== "sim";
-  $("#tab-race").setAttribute("aria-selected", race); $("#tab-sim").setAttribute("aria-selected", !race);
-  $("#view-race").hidden = !race; $("#view-sim").hidden = race;
+  if (!["race","sim","path"].includes(which)) which = "race";
+  ["race","sim","path"].forEach(t => { $("#tab-"+t).setAttribute("aria-selected", t===which); $("#view-"+t).hidden = t!==which; });
   store.set("tab", which);
-  if (!race && D) runSim();
+  if (which !== "race" && D) runSim();
 }
 $("#tab-race").onclick = () => setTab("race");
 $("#tab-sim").onclick = () => setTab("sim");
+$("#tab-path").onclick = () => setTab("path");
 $("#divToggle").onchange = e => { divMode = e.target.checked; store.set("divMode", divMode?"1":"0"); refreshAll(); };
 $("#runSim").onclick = runSim;
 ["#nSims","#formW","#focusTeam"].forEach(s => $(s).onchange = () => { if (s==="#focusTeam") store.set("focus", $(s).value); runSim(); });
@@ -575,7 +673,7 @@ function raceOddsFocusDefault(){ const sd = seedTeams(recordThrough(D.lastScored
 function refreshAll(){
   raceOdds = simulate(10000, 0.35, false);
   renderRace(); renderSlate();
-  if (!$("#view-sim").hidden) runSim();
+  if (!$("#view-sim").hidden || !$("#view-path").hidden) runSim();
 }
 
 async function boot(force){
@@ -597,7 +695,7 @@ async function boot(force){
   sel.innerHTML = D.teams.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(t=>`<option value="${t.rid}">${esc(t.name)}</option>`).join("");
   sel.value = D.byRid[saved] ? saved : (raceOddsFocusDefault());
   refreshAll();
-  if (store.get("tab") === "sim" && !force) setTab("sim");
+  if (!force && (store.get("tab") === "sim" || store.get("tab") === "path")) setTab(store.get("tab"));
 }
 boot(false);
 })();
