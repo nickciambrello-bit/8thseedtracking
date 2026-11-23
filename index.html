@@ -160,6 +160,17 @@ footer{margin-top:28px;font-size:.78rem;color:var(--muted)}
 .res.W{background:var(--good-soft);color:var(--good)}.res.L{background:var(--bad-soft);color:var(--bad)}.res.T,.res.U{background:var(--panel-2);color:var(--muted)}
 td.flip{box-shadow:inset 0 0 0 2px var(--accent)}
 .d.up{color:var(--good)}.d.dn{color:var(--bad)}.d{font-family:var(--mono);font-size:.75rem;color:var(--muted)}
+.seg{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.seg button{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:6px 12px;cursor:pointer;font-size:.85rem}
+.seg button[aria-checked="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.how{display:inline-block;padding:1px 6px;border-radius:4px;font-family:var(--mono);font-size:.7rem;white-space:nowrap}
+.how.rec{background:var(--good-soft);color:var(--good)}.how.pf{background:var(--accent-soft);color:var(--accent)}.how.med{background:var(--cut-soft);color:var(--cut)}.how.out{background:var(--panel-2);color:var(--muted)}
+.fmtcmp td.fc{text-align:center;line-height:1.2;min-width:88px}
+.fmtcmp td.fc small{display:block;font-family:var(--mono);font-size:.68rem;color:var(--muted);margin-top:2px}
+.fmtcmp th{white-space:normal;max-width:110px;vertical-align:bottom}
+.fmtcmp th.sel{color:var(--fg)}
+.pill.med{background:var(--cut-soft);color:var(--cut)}
+.fmtcmp td.fc.sel{background:var(--panel-2)}
 @keyframes flash{from{background:var(--accent-soft)}to{background:transparent}}
 #simTable.flash tbody{animation:flash .8s ease-out}
 .btn:disabled{opacity:.6;cursor:progress}
@@ -186,6 +197,7 @@ td.flip{box-shadow:inset 0 0 0 2px var(--accent)}
     <button role="tab" id="tab-sim" aria-selected="false" type="button">Simulator</button>
     <button role="tab" id="tab-path" aria-selected="false" type="button">Paths to 8th</button>
     <button role="tab" id="tab-swap" aria-selected="false" type="button">Schedule Swap</button>
+    <button role="tab" id="tab-fmt" aria-selected="false" type="button">Playoff Formats</button>
   </nav>
 
   <div class="rules">
@@ -255,6 +267,24 @@ td.flip{box-shadow:inset 0 0 0 2px var(--accent)}
         <h2>Pick the rest of the season</h2>
         <p class="sub">Tap a team to make them win. Tap again to go back to simulated. Add a score to lock in that team's points too, which is what decides seed 8.</p>
         <div id="slate"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="view-fmt" hidden>
+    <div class="seg" id="fmtSeg" role="radiogroup" aria-label="Playoff format"></div>
+    <p class="sub" id="fmtDesc" style="max-width:80ch"></p>
+    <div class="stack">
+      <div class="panel">
+        <h2 id="fmtTitle">Seeding</h2>
+        <p class="sub" id="fmtSub"></p>
+        <div class="scroll"><table id="fmtTable"></table></div>
+      </div>
+      <div class="panel">
+        <h2>Every format side by side</h2>
+        <p class="sub" id="fmtCmpSub">Each team's seed right now under every format, with its chance of making the playoffs underneath.</p>
+        <div class="scroll"><table class="fmtcmp" id="fmtCmp"></table></div>
+        <p class="note">Median record: each week every team also plays the league median. Score above it and you get an extra win, below it an extra loss, so a 14-week season becomes a 28-game record. Points-for breaks ties in every format. Odds include any picks you made in the Simulator and any schedule swap you've applied to all tabs.</p>
       </div>
     </div>
   </section>
@@ -398,6 +428,110 @@ function recordThrough(week){
     const A=rec[g.a], B=rec[g.b]; A.pf+=g.pa; B.pf+=g.pb; A.pa+=g.pb; B.pa+=g.pa;
     if (g.pa>g.pb){A.w++;B.l++} else if (g.pb>g.pa){B.w++;A.l++} else {A.t++;B.t++} });
   return rec;
+}
+
+// ---------- Playoff formats ----------
+const PLAYOFF_TEAMS = SEEDS_BY_RECORD + 1;
+const FORMATS = [
+  {id:"pf8",    k:7, rule:"pf",  name:"8th by points",            desc:"Seeds 1-7 by record. Seed 8 goes to the most points-for among everyone else. This is the league's current rule."},
+  {id:"pf78",   k:6, rule:"pf",  name:"7th & 8th by points",      desc:"Seeds 1-6 by record. Seeds 7 and 8 go to the two highest points-for totals among everyone else."},
+  {id:"pfAll",  k:0, rule:"pf",  name:"All 8 by points",          desc:"Record doesn't matter. The 8 highest points-for totals make the playoffs, seeded by points."},
+  {id:"med8",   k:7, rule:"med", name:"8th by median record",     desc:"Seeds 1-7 by head-to-head record. Seed 8 goes to the best median record (head-to-head plus a weekly game against the league median) among everyone else."},
+  {id:"med78",  k:6, rule:"med", name:"7th & 8th by median record", desc:"Seeds 1-6 by head-to-head record. Seeds 7 and 8 go to the two best median records among everyone else."},
+  {id:"medAll", k:0, rule:"med", name:"All 8 by median record",   desc:"Every team plays the league median each week as well as its opponent. Seeds 1-8 go by that combined record."}
+];
+let fmtId = (()=>{ try { return localStorage.getItem("fmt") || "pf8"; } catch(e){ return "pf8"; } })();
+// adds median wins/losses (mw, ml) to a record object built from completed games
+function addMedian(rec, week){
+  const byWeek = {};
+  D.games.forEach(g => { if (!g.done || g.week > week) return; (byWeek[g.week] = byWeek[g.week] || []).push([g.a, g.pa], [g.b, g.pb]); });
+  Object.values(rec).forEach(r => { r.mw = 0; r.ml = 0; });
+  Object.values(byWeek).forEach(arr => { const s = arr.map(x=>x[1]).sort((p,q)=>p-q), m = s.length%2 ? s[s.length>>1] : (s[s.length/2-1]+s[s.length/2])/2;
+    arr.forEach(([r, p]) => { if (p > m) rec[r].mw++; else rec[r].ml++; }); });
+  return rec;
+}
+function seedFormat(rec, f){
+  const all = D.teams.map(t=>t.rid);
+  const byRec = (x,y) => { const a=rec[x], b=rec[y]; return (b.w+b.t/2)-(a.w+a.t/2) || b.pf-a.pf; };
+  const byMed = (x,y) => { const a=rec[x], b=rec[y]; return (b.w+b.t/2+b.mw)-(a.w+a.t/2+a.mw) || b.pf-a.pf; };
+  const byPF  = (x,y) => rec[y].pf - rec[x].pf;
+  let top = [];
+  if (f.k > 0){
+    if (divMode && D.divisions.length){
+      const winners = D.divisions.map(d => all.filter(r => D.byRid[r].div === d).sort(byRec)[0]).filter(Boolean).sort(byRec);
+      top = winners.slice(0, f.k); top = top.concat(all.filter(r => !top.includes(r)).sort(byRec).slice(0, f.k - top.length));
+    } else top = all.slice().sort(byRec).slice(0, f.k);
+  }
+  const rule = f.rule === "pf" ? byPF : byMed;
+  const rest = all.filter(r => !top.includes(r)).sort(rule);
+  const order = top.concat(rest); const seedOf = {}, how = {};
+  order.forEach((r,i) => { seedOf[r] = i+1; how[r] = i < f.k ? "rec" : (i < PLAYOFF_TEAMS ? f.rule : "out"); });
+  return {seedOf, order, how};
+}
+function simulateFormats(nSims, formW, seed){
+  const {models} = teamModels(formW);
+  const base = addMedian(recordThrough(D.lastReg), D.lastReg);
+  const future = D.games.filter(g => !g.done);
+  const rids = D.teams.map(t=>t.rid);
+  const res = {}; FORMATS.forEach(f => { res[f.id] = {}; rids.forEach(r => res[f.id][r] = {make:0, seedSum:0}); });
+  const rnd = mulberry32(seed);
+  const gauss = () => { let u=0,v=0; while(u===0)u=rnd(); v=rnd(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); };
+  const rec = {}; rids.forEach(r => rec[r] = {w:0,l:0,t:0,pf:0,mw:0,ml:0});
+  for (let s=0; s<nSims; s++){
+    rids.forEach(r => { const b=base[r], x=rec[r]; x.w=b.w; x.l=b.l; x.t=b.t; x.pf=b.pf; x.mw=b.mw; x.ml=b.ml; });
+    let wk = null, scores = [];
+    const closeWeek = () => { if (!scores.length) return; const v = scores.map(x=>x[1]).sort((p,q)=>p-q), m = v.length%2 ? v[v.length>>1] : (v[v.length/2-1]+v[v.length/2])/2;
+      scores.forEach(([r,p]) => { if (p > m) rec[r].mw++; else rec[r].ml++; }); scores = []; };
+    for (let i=0;i<future.length;i++){
+      const g = future[i]; if (g.week !== wk){ closeWeek(); wk = g.week; }
+      const k = g.week+":"+g.mid, p = picks[k];
+      const ma = models[g.a], mb = models[g.b];
+      let sa = p && p.scores && isFinite(p.scores[g.a]) ? p.scores[g.a] : Math.max(30, ma.mu + ma.sd*gauss());
+      let sb = p && p.scores && isFinite(p.scores[g.b]) ? p.scores[g.b] : Math.max(30, mb.mu + mb.sd*gauss());
+      if (p && p.winner){
+        const lockedA = p.scores && isFinite(p.scores[g.a]), lockedB = p.scores && isFinite(p.scores[g.b]);
+        if (p.winner === g.a && sa <= sb){ if (!lockedA) sa = sb + 0.01 + rnd()*12; else if (!lockedB) sb = Math.max(30, sa - 0.01 - rnd()*12); }
+        if (p.winner === g.b && sb <= sa){ if (!lockedB) sb = sa + 0.01 + rnd()*12; else if (!lockedA) sa = Math.max(30, sb - 0.01 - rnd()*12); }
+      }
+      const A=rec[g.a], B=rec[g.b]; A.pf+=sa; B.pf+=sb; scores.push([g.a, sa], [g.b, sb]);
+      if (sa>sb){A.w++;B.l++} else if (sb>sa){B.w++;A.l++} else {A.t++;B.t++}
+    }
+    closeWeek();
+    FORMATS.forEach(f => { const sd = seedFormat(rec, f), o = res[f.id]; rids.forEach(r => { const x = o[r], sv = sd.seedOf[r]; if (sv <= PLAYOFF_TEAMS) x.make++; x.seedSum += sv; }); });
+  }
+  FORMATS.forEach(f => rids.forEach(r => { const x = res[f.id][r]; x.make /= nSims; x.avgSeed = x.seedSum / nSims; }));
+  return res;
+}
+function renderFormats(){
+  if (!D) return;
+  const f = FORMATS.find(x => x.id === fmtId) || FORMATS[0];
+  $("#fmtSeg").innerHTML = FORMATS.map(x => `<button type="button" role="radio" aria-checked="${x.id===f.id}" data-fmt="${x.id}">${esc(x.name)}${x.id==="pf8"?" (current)":""}</button>`).join("");
+  $("#fmtDesc").textContent = f.desc;
+  const wk = D.lastScored, rec = addMedian(recordThrough(wk), wk);
+  const cur = seedFormat(rec, FORMATS[0]), sd = seedFormat(rec, f);
+  const odds = simulateFormats(5000, 0.35, 99);
+  const howTxt = {rec:"Record", pf:"Points", med:"Median record", out:"Out"};
+  $("#fmtTitle").textContent = `Seeding after week ${wk}: ${f.name}`;
+  $("#fmtSub").textContent = f.id === "pf8" ? "This is how the league seeds today." : "Arrows show the change from the league's current format (8th by points).";
+  let h = `<thead><tr><th>Seed</th><th>Team</th><th class="c">Record</th><th class="c">Median rec</th><th class="r">PF</th><th>Got in by</th><th class="r">Playoff odds</th><th class="r">Current format</th></tr></thead><tbody>`;
+  sd.order.forEach((r,i) => { const t = D.byRid[r], x = rec[r], d = cur.seedOf[r] - sd.seedOf[r];
+    const inNow = cur.seedOf[r] <= PLAYOFF_TEAMS, inF = i < PLAYOFF_TEAMS;
+    const pill = inF ? `<span class="pill ${sd.how[r]==="rec"?"in":sd.how[r]==="med"?"med":"eight"}">${i+1}</span>` : `<span class="pill out">${i+1}</span>`;
+    const flip = inNow !== inF ? ` <span class="mv ${inF?"up":"dn"}">${inF?"in":"out"}</span>` : "";
+    const o = odds[f.id][r].make, o0 = odds.pf8[r].make, dm = o - o0;
+    h += `<tr class="${i===PLAYOFF_TEAMS-1?"cutline":""} ${r===D.meRid?"me":""}"><td>${pill} ${d?`<span class="mv ${d>0?"up":"dn"}">${d>0?"▲":"▼"}${Math.abs(d)}</span>`:""}${flip}</td><td>${teamCell(t)}</td>
+      <td class="c num">${recStr(x)}</td><td class="c num">${x.w+x.mw}-${x.l+x.ml}${x.t?"-"+x.t:""}</td><td class="r num">${fmt(x.pf,2)}</td>
+      <td><span class="how ${sd.how[r]}">${howTxt[sd.how[r]]}</span></td>
+      <td class="r pct"><b>${pct(o)}</b> ${f.id!=="pf8" && Math.abs(dm)>=0.01?`<span class="d ${dm>0?"up":"dn"}">${dm>0?"+":""}${Math.round(dm*100)}</span>`:""}</td><td class="r pct">${pct(o0)}</td></tr>`; });
+  $("#fmtTable").innerHTML = h + "</tbody>";
+  // matrix
+  const fmts = FORMATS;
+  let m = `<thead><tr><th>Team</th>${fmts.map(x=>`<th class="c ${x.id===f.id?"sel":""}">${esc(x.name)}</th>`).join("")}</tr></thead><tbody>`;
+  cur.order.forEach(r => { m += `<tr class="${r===D.meRid?"me":""}"><td>${teamCell(D.byRid[r])}</td>` + fmts.map(x => { const s = seedFormat(rec, x), sv = s.seedOf[r], o = odds[x.id][r].make;
+      const pill = sv <= PLAYOFF_TEAMS ? `<span class="pill ${s.how[r]==="rec"?"in":s.how[r]==="med"?"med":"eight"}">${sv}</span>` : `<span class="pill out">${sv}</span>`;
+      return `<td class="fc ${x.id===f.id?"sel":""}">${pill}<small>${pct(o)} in</small></td>`; }).join("") + "</tr>"; });
+  $("#fmtCmp").innerHTML = m + `</tbody>`;
+  $("#fmtCmpSub").textContent = `Each team's seed after week ${wk} under every format (green = got in on record, orange = got in on points, blue = got in on median record, grey = out), with its chance of making the playoffs from 5,000 simulations of the rest of the season. Rows follow the current format's seeding.`;
 }
 
 // ---------- Simulation ----------
@@ -817,16 +951,19 @@ function renderSwap(){
 
 // ---------- Events ----------
 function setTab(which){
-  if (!["race","sim","path","swap"].includes(which)) which = "race";
-  ["race","sim","path","swap"].forEach(t => { $("#tab-"+t).setAttribute("aria-selected", t===which); $("#view-"+t).hidden = t!==which; });
+  if (!["race","sim","path","swap","fmt"].includes(which)) which = "race";
+  ["race","sim","path","swap","fmt"].forEach(t => { $("#tab-"+t).setAttribute("aria-selected", t===which); $("#view-"+t).hidden = t!==which; });
   store.set("tab", which);
   if ((which === "sim" || which === "path") && D) runSim();
   if (which === "swap" && D) renderSwap();
+  if (which === "fmt" && D) renderFormats();
 }
 $("#tab-race").onclick = () => setTab("race");
 $("#tab-sim").onclick = () => setTab("sim");
 $("#tab-path").onclick = () => setTab("path");
 $("#tab-swap").onclick = () => setTab("swap");
+$("#tab-fmt").onclick = () => setTab("fmt");
+$("#fmtSeg").addEventListener("click", e => { const btn = e.target.closest("[data-fmt]"); if (!btn) return; fmtId = btn.dataset.fmt; try { localStorage.setItem("fmt", fmtId); } catch(err){} renderFormats(); });
 ["#swapA","#swapB"].forEach(s => $(s).onchange = () => { store.set(s, $(s).value); renderSwap(); if (swapGlobal) refreshAll(); });
 $("#swapAll").onchange = e => { swapGlobal = e.target.checked; applyGlobalSwap(); refreshAll(); };
 $("#divToggle").onchange = e => { divMode = e.target.checked; store.set("divMode", divMode?"1":"0"); refreshAll(); };
@@ -864,6 +1001,7 @@ function refreshAll(){
   renderRace(); renderSlate();
   if (!$("#view-sim").hidden || !$("#view-path").hidden) runSim();
   if (!$("#view-swap").hidden) renderSwap();
+  if (!$("#view-fmt").hidden) renderFormats();
 }
 
 async function boot(force){
@@ -890,7 +1028,7 @@ async function boot(force){
   $("#swapB").value = D.byRid[sb] ? sb : seedTeams(recordThrough(D.lastScored), D.teams).eighth;
   swapSel = {x:+$("#swapA").value, y:+$("#swapB").value}; applyGlobalSwap();
   refreshAll();
-  if (!force && ["sim","path","swap"].includes(store.get("tab"))) setTab(store.get("tab"));
+  if (!force && ["sim","path","swap","fmt"].includes(store.get("tab"))) setTab(store.get("tab"));
 }
 boot(false);
 })();
