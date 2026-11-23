@@ -171,6 +171,20 @@ td.flip{box-shadow:inset 0 0 0 2px var(--accent)}
 .fmtcmp th.sel{color:var(--fg)}
 .pill.med{background:var(--cut-soft);color:var(--cut)}
 .fmtcmp td.fc.sel{background:var(--panel-2)}
+.live{border:1px solid var(--line);border-radius:8px;background:var(--panel);padding:14px 16px;margin-bottom:20px}
+.live .lh{display:flex;flex-wrap:wrap;gap:8px 16px;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+.live .lh label{display:inline-flex;gap:6px;align-items:center;font-size:.85rem;color:var(--muted);cursor:pointer}
+.livegames{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,330px),1fr));gap:8px}
+.lg{display:grid;grid-template-columns:minmax(0,1fr) auto auto minmax(0,1fr);gap:4px 8px;align-items:center;border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:.8rem}
+.lg .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lg .nm.b{text-align:right}
+.lg .sc{font-family:var(--mono);text-align:center;line-height:1.15}
+.lg .sc b{display:block;font-size:.9rem}
+.lg .sc small{display:block;color:var(--muted);font-size:.66rem}
+.lg .win{font-weight:600;color:var(--good)}
+.lg .left{grid-column:1/-1;color:var(--muted);font-size:.68rem;font-family:var(--mono);display:flex;justify-content:space-between}
+.status .chip{align-self:center}
+.chip.proj{background:var(--cut-soft);color:var(--cut)}
 @keyframes flash{from{background:var(--accent-soft)}to{background:transparent}}
 #simTable.flash tbody{animation:flash .8s ease-out}
 .btn:disabled{opacity:.6;cursor:progress}
@@ -207,6 +221,7 @@ td.flip{box-shadow:inset 0 0 0 2px var(--accent)}
   <div id="swapBanner"></div>
 
   <section id="view-race">
+    <div id="livePanel"></div>
     <div class="leader" id="leader"></div>
     <div class="panel" style="margin-bottom:20px">
           <h2>Race for seed 8</h2>
@@ -371,7 +386,59 @@ async function loadLive(){
   const weeks = []; for(let w=(league.settings.start_week||1); w<=lastReg; w++) weeks.push(w);
   const ms = await Promise.all(weeks.map(w => getJSON("/league/"+leagueId+"/matchups/"+w).catch(()=>[])));
   const matchups = {}; weeks.forEach((w,i)=>matchups[w]=ms[i]||[]);
-  return {state, league, users, rosters, matchups, capturedAt:new Date().toISOString()};
+  // current week in progress: pull player projections and the NFL schedule (both optional)
+  let projections = null, schedule = null;
+  const ls = league.settings.last_scored_leg, lw = ls == null ? null : ls + 1;
+  if (lw && lw <= lastReg && state && state.season_type === "regular" && state.week >= lw){
+    const pos = ["QB","RB","WR","TE","K","DEF"].map(p => "position[]=" + p).join("&");
+    [projections, schedule] = await Promise.all([
+      fetch(`https://api.sleeper.app/projections/nfl/${league.season}/${lw}?season_type=regular&${pos}`, {cache:"no-store"}).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch(`https://api.sleeper.com/schedule/nfl/regular/${league.season}`, {cache:"no-store"}).then(r => r.ok ? r.json() : null).catch(() => null)
+    ]);
+  }
+  return {state, league, users, rosters, matchups, projections, schedule, capturedAt:new Date().toISOString()};
+}
+
+let useLive = (() => { try { return localStorage.getItem("useLive") !== "0"; } catch(e){ return true; } })();
+let RAW = null;
+function etDate(d){ try { return new Intl.DateTimeFormat("en-CA", {timeZone:"America/New_York", year:"numeric", month:"2-digit", day:"numeric"}).format(d).replace(/\//g,"-"); } catch(e){ return d.toISOString().slice(0,10); } }
+// Projected final score for each roster in the in-progress week.
+function projectLiveWeek(raw, week, models){
+  const arr = (raw.matchups && raw.matchups[week]) || [];
+  const proj = {}, dateByTeam = {}, today = etDate(new Date(raw.capturedAt || Date.now()));
+  const sc = raw.league.scoring_settings || {}, rec = sc.rec == null ? 1 : sc.rec;
+  const key = rec >= 0.75 ? "pts_ppr" : rec >= 0.25 ? "pts_half_ppr" : "pts_std";
+  (raw.projections || []).forEach(p => { if (!p || !p.player_id || !p.stats) return; const v = p.stats[key] ?? p.stats.pts_ppr; if (v == null) return;
+    proj[p.player_id] = {pts:+v, date:p.date || null, team:p.team || null}; if (p.team && p.date) dateByTeam[p.team] = p.date; });
+  const status = {};
+  (raw.schedule || []).forEach(g => { if (g.week !== week) return; [g.home, g.away].forEach(t => { status[t] = g.status; if (g.date) dateByTeam[t] = dateByTeam[t] || g.date; }); });
+  const hasProj = Object.keys(proj).length > 0;
+  const out = {};
+  arr.forEach(m => {
+    const starters = (m.starters || []).filter(p => p && p !== "0");
+    let live = +m.points || 0, total = 0, done = 0, playing = 0, toGo = 0;
+    if (!starters.length || !hasProj){
+      // no player data: live points plus the team's usual share for starters who haven't scored yet
+      const zeros = (m.starters_points || []).filter(x => !x).length, n = (m.starters_points || []).length || 1;
+      const mu = models && models[m.roster_id] ? models[m.roster_id].mu : 115;
+      total = live + (live > 0 ? mu * zeros / n : mu); toGo = live > 0 ? zeros : n;
+    } else {
+      starters.forEach((pid, i) => {
+        const actual = +((m.players_points && m.players_points[pid]) ?? (m.starters_points && m.starters_points[i]) ?? 0);
+        const pj = proj[pid]; const team = pj && pj.team ? pj.team : (/^[A-Z]{2,3}$/.test(pid) ? pid : null);
+        const date = (pj && pj.date) || (team && dateByTeam[team]) || null;
+        const p = pj ? pj.pts : (/^[A-Z]{2,3}$/.test(pid) ? 6 : 0);
+        const final = (team && status[team] === "complete") || (date && date < today);
+        if (final){ total += actual; done++; }
+        else if (date && date > today){ total += p; toGo++; }
+        else if (actual !== 0){ total += actual + Math.max(0, p - actual) * 0.5; playing++; }
+        else if (!date && !pj){ total += actual; done++; }
+        else { total += p; toGo++; }
+      });
+    }
+    out[m.roster_id] = {live, proj: Math.round(total*100)/100, done, playing, toGo, method: (starters.length && hasProj) ? "players" : "team"};
+  });
+  return {week, teams: out, hasProj, anyPoints: arr.some(m => (+m.points||0) > 0)};
 }
 
 function normalize(raw, live){
@@ -401,8 +468,21 @@ function normalize(raw, live){
     });
   }
   const me = teams.find(t => (t.owner||"").toLowerCase() === "nickc71493");
-  return { league, teams, byRid, games, startWeek, lastReg, lastScored, live, capturedAt:raw.capturedAt, meRid: me ? me.rid : teams[0].rid,
-           divisions: [...new Set(teams.map(t=>t.div).filter(Boolean))] };
+  const out = { league, teams, byRid, games, startWeek, lastReg, lastScored, live, capturedAt:raw.capturedAt, meRid: me ? me.rid : teams[0].rid,
+           divisions: [...new Set(teams.map(t=>t.div).filter(Boolean))], lastFinal:lastScored, liveWeek:null, liveOn:false };
+  // in-progress week: project final scores, and if switched on, count them as if they hold
+  const lw = lastScored + 1;
+  const started = (matchups[lw] || []).some(m => (+m.points||0) > 0) || (raw.projections && raw.projections.length);
+  if (lw <= lastReg && state && state.season_type === "regular" && state.week >= lw && started){
+    const saveD = D; D = out; let models = null; try { models = teamModels(0).models; } catch(e){} D = saveD;
+    out.liveWeek = lw; out.liveProj = projectLiveWeek(raw, lw, models);
+    if (useLive){
+      out.liveOn = true; out.lastScored = lw;
+      games.forEach(g => { if (g.week !== lw) return; const pa = out.liveProj.teams[g.a], pb = out.liveProj.teams[g.b];
+        g.done = true; g.live = true; g.pa = pa ? pa.proj : 0; g.pb = pb ? pb.proj : 0; byRid[g.a].scores[lw] = g.pa; byRid[g.b].scores[lw] = g.pb; });
+    }
+  }
+  return out;
 }
 
 // ---------- Standings + seeding ----------
@@ -537,15 +617,16 @@ function renderFormats(){
 // ---------- Simulation ----------
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
 
+function realScores(t){ return Object.keys(t.scores).filter(w => !(D.liveOn && +w === D.liveWeek)).reduce((o,w) => (o[w] = t.scores[w], o), {}); }
 function teamModels(formW){
-  const all = []; D.teams.forEach(t => Object.values(t.scores).forEach(s => all.push(s)));
+  const all = []; D.teams.forEach(t => Object.values(realScores(t)).forEach(s => all.push(s)));
   const lgMean = all.length ? all.reduce((a,b)=>a+b,0)/all.length : 115;
   // league within-team spread
-  let ss=0, n=0; D.teams.forEach(t => { const v=Object.values(t.scores); if(v.length<2) return; const m=v.reduce((a,b)=>a+b,0)/v.length; v.forEach(x=>{ss+=(x-m)**2;n++}); });
+  let ss=0, n=0; D.teams.forEach(t => { const v=Object.values(realScores(t)); if(v.length<2) return; const m=v.reduce((a,b)=>a+b,0)/v.length; v.forEach(x=>{ss+=(x-m)**2;n++}); });
   const lgSd = n > 12 ? Math.sqrt(ss/(n-D.teams.length)) : 22;
   const K = 3, models = {};
   D.teams.forEach(t => {
-    const wks = Object.keys(t.scores).map(Number).sort((a,b)=>a-b); const v = wks.map(w=>t.scores[w]);
+    const rs = realScores(t); const wks = Object.keys(rs).map(Number).sort((a,b)=>a-b); const v = wks.map(w=>rs[w]);
     const avg = v.length ? v.reduce((a,b)=>a+b,0)/v.length : lgMean;
     const recent = v.slice(-4); const rAvg = recent.length ? recent.reduce((a,b)=>a+b,0)/recent.length : avg;
     const blend = avg*(1-formW) + rAvg*formW;
@@ -609,7 +690,37 @@ const teamCell = t => `<div class="team">${avatar(t)}<span class="tn"><b title="
 const recStr = r => r.w + "-" + r.l + (r.t ? "-" + r.t : "");
 
 // ---------- Tab 1 ----------
+function renderLive(){
+  const el = $("#livePanel"); if (!D.liveWeek){ el.innerHTML = ""; return; }
+  const L = D.liveProj, w = D.liveWeek;
+  const games = D.baseGames.filter(g => g.week === w);
+  const pairs = games.map(g => { const A = L.teams[g.a] || {live:0,proj:0}, B = L.teams[g.b] || {live:0,proj:0};
+    const shortN = r => esc(D.byRid[r].name);
+    const left = x => x.method === "players" ? (x.playing + x.toGo ? `${x.playing} playing · ${x.toGo} to go` : "all done") : "";
+    return `<div class="lg"><span class="nm ${A.proj>B.proj?"win":""}" title="${shortN(g.a)}">${shortN(g.a)}</span>
+      <span class="sc"><b>${fmt(A.live,2)}</b><small>proj ${fmt(A.proj,1)}</small></span>
+      <span class="sc"><b>${fmt(B.live,2)}</b><small>proj ${fmt(B.proj,1)}</small></span>
+      <span class="nm b ${B.proj>A.proj?"win":""}" title="${shortN(g.b)}">${shortN(g.b)}</span>
+      <span class="left"><span>${left(A)}</span><span>${left(B)}</span></span></div>`; }).join("");
+  const how = L.hasProj ? "Projected finals use Sleeper's live points plus player projections for starters who haven't played. Players in games happening today count their points so far plus half of what's left of their projection." : "Player projections weren't available, so projected finals use live points plus each team's season average for starters who haven't scored.";
+  el.innerHTML = `<div class="live"><div class="lh"><h2>Week ${w} live</h2>
+    <label><input type="checkbox" id="liveToggle" ${D.liveOn?"checked":""}> Count week ${w} projections in standings and odds</label></div>
+    <p class="sub">${D.liveOn ? `Everything on this page treats these projected finals as if they hold.` : `Standings and odds use final results through week ${D.lastFinal} only, and the Simulator plays week ${w} out from scratch.`} ${how} Refresh to pull the latest scores.</p>
+    <div class="livegames">${pairs}</div></div>`;
+  $("#liveToggle").onchange = e => { useLive = e.target.checked; try { localStorage.setItem("useLive", useLive ? "1" : "0"); } catch(err){} rebuild(); };
+}
+function setWeekChip(){
+  const c = $("#weekChip");
+  if (D.liveOn){ c.className = "chip proj"; c.textContent = `Week ${D.liveWeek} projected · final through ${D.lastFinal}`; }
+  else { c.className = "chip"; c.textContent = D.lastScored >= D.lastReg ? "Regular season final" : `Through week ${D.lastScored} of ${D.lastReg}`; }
+}
+function rebuild(){
+  D = normalize(RAW, D.live); D.baseGames = D.games;
+  Object.keys(picks).forEach(k => { const g = D.games.find(x=>x.week+":"+x.mid===k); if (!g || (g.done && !g.live)) delete picks[k]; });
+  setWeekChip(); applyGlobalSwap(); refreshAll();
+}
 function renderRace(){
+  renderLive();
   const wk = D.lastScored;
   const rec = recordThrough(wk), sd = seedTeams(rec, D.teams);
   const prev = wk > D.startWeek ? seedTeams(recordThrough(wk-1), D.teams) : null;
@@ -619,7 +730,7 @@ function renderRace(){
   const L = D.byRid[sd.eighth];
   const weeksLeft = D.lastReg - wk;
   $("#leader").innerHTML = `<div class="seed">8</div>
-    <div class="who"><span class="eyebrow">Holds seed 8 after week ${wk}</span><b>${esc(L.name)}</b><span class="sub" style="margin:0">${esc(L.owner)} · ${recStr(rec[L.rid])} · ${fmt(leadPF,2)} PF</span></div>
+    <div class="who"><span class="eyebrow">Holds seed 8 after week ${wk}${D.liveOn?" (projected)":""}</span><b>${esc(L.name)}</b><span class="sub" style="margin:0">${esc(L.owner)} · ${recStr(rec[L.rid])} · ${fmt(leadPF,2)} PF</span></div>
     <div class="margin"><span class="eyebrow">Lead over ${esc(D.byRid[runner].name)}</span><b>+${fmt(leadPF-rec[runner].pf,2)}</b><span class="sub" style="margin:0">${weeksLeft} week${weeksLeft===1?"":"s"} left</span></div>`;
 
   const odds = raceOdds ? raceOdds.out : null;
@@ -1010,12 +1121,12 @@ async function boot(force){
   try { raw = await loadLive(); live = true; }
   catch(e){ errMsg = e && e.message || String(e); if (window.SNAPSHOT && window.SNAPSHOT.league && window.SNAPSHOT.league.league_id === leagueId) raw = window.SNAPSHOT; }
   if (!raw){ $("#srcText").textContent = "Couldn't load"; $("#msg").innerHTML = `<div class="banner err">Sleeper didn't answer (${esc(errMsg)}). Check your connection and press Refresh.</div>`; return; }
-  D = normalize(raw, live); D.baseGames = D.games;
+  RAW = raw; D = normalize(raw, live); D.baseGames = D.games;
   try { picks = JSON.parse(store.get("picks:"+leagueId+":"+D.league.season) || "{}") || {}; } catch(e){ picks = {}; }
   // drop picks for games that are now final
-  Object.keys(picks).forEach(k => { const g = D.games.find(x=>x.week+":"+x.mid===k); if (!g || g.done) delete picks[k]; });
+  Object.keys(picks).forEach(k => { const g = D.games.find(x=>x.week+":"+x.mid===k); if (!g || (g.done && !g.live)) delete picks[k]; });
   $("#lgName").textContent = `${D.league.name} · ${D.league.season}`;
-  $("#weekChip").textContent = D.lastScored >= D.lastReg ? "Regular season final" : `Through week ${D.lastScored} of ${D.lastReg}`;
+  setWeekChip();
   if (live){ $("#srcChip").className = "chip live"; $("#srcText").textContent = "Live from Sleeper · " + new Date(D.capturedAt).toLocaleString([], {month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}); }
   else { $("#srcChip").className = "chip stale"; $("#srcText").textContent = "Saved copy from " + new Date(D.capturedAt).toLocaleDateString([], {month:"short",day:"numeric"});
     $("#msg").innerHTML = `<div class="banner">Showing a saved copy of the league because Sleeper couldn't be reached from here. Open the published site to get live numbers.</div>`; }

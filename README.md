@@ -14,6 +14,8 @@ League rule: seeds 1-7 go by record (points-for breaks ties). The 8th seed goes 
 
 It pulls live data from the public Sleeper API every time the page opens, so it updates itself each week. No server, no API key.
 
+While a week is in progress, the page also pulls that week's live scores and Sleeper's player projections, projects each team's final score, and (with the "Count projections" box ticked on The Race tab) shows standings and odds as if those projections hold. Untick it to see final results only.
+
 ## Put it on GitHub Pages
 
 1. Create a new public repo on GitHub (for example `jando-8th-seed`).
