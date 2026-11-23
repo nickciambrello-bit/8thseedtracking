@@ -45,7 +45,9 @@ button,select,input{font:inherit;color:inherit}
 .btn:hover{border-color:var(--fg)}
 .btn.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-nav.tabs{display:flex;gap:4px;margin:18px 0 18px;border-bottom:1px solid var(--line)}
+nav.tabs{display:flex;gap:4px;margin:18px 0 18px;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none}
+nav.tabs button{white-space:nowrap}
+@media (max-width:520px){nav.tabs button{font-size:1rem;padding:8px 9px}}
 nav.tabs button{background:none;border:0;border-bottom:3px solid transparent;padding:8px 14px;font-family:var(--display);font-size:1.2rem;font-weight:600;color:var(--muted);cursor:pointer;margin-bottom:-1px}
 nav.tabs button[aria-selected="true"]{color:var(--fg);border-bottom-color:var(--accent)}
 .rules{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;font-size:.85rem;color:var(--muted);margin-bottom:18px}
@@ -145,6 +147,19 @@ footer{margin-top:28px;font-size:.78rem;color:var(--muted)}
 .wkl td{padding:5px 6px;border-bottom:1px solid var(--line);white-space:normal;vertical-align:top}
 .wkl td:first-child{font-family:var(--mono);color:var(--muted);white-space:nowrap}
 .chip2{display:inline-block;padding:1px 6px;border-radius:4px;font-family:var(--mono);font-size:.7rem;font-weight:500;white-space:nowrap}
+.swapcards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:16px}
+.swapcard{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.swapcard .recs{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.swapcard .rec{display:flex;flex-direction:column}
+.swapcard .rec small{font-family:var(--mono);font-size:.66rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.swapcard .rec b{font-family:var(--display);font-size:2rem;line-height:1}
+.swapcard .arrow{font-size:1.4rem;color:var(--muted)}
+.swapcard .line{font-size:.85rem;color:var(--muted)}
+.swapweeks td{font-size:.8rem}
+.res{display:inline-block;min-width:18px;text-align:center;font-family:var(--mono);font-weight:600;font-size:.72rem;padding:1px 4px;border-radius:3px}
+.res.W{background:var(--good-soft);color:var(--good)}.res.L{background:var(--bad-soft);color:var(--bad)}.res.T,.res.U{background:var(--panel-2);color:var(--muted)}
+td.flip{box-shadow:inset 0 0 0 2px var(--accent)}
+.d.up{color:var(--good)}.d.dn{color:var(--bad)}.d{font-family:var(--mono);font-size:.75rem;color:var(--muted)}
 @keyframes flash{from{background:var(--accent-soft)}to{background:transparent}}
 #simTable.flash tbody{animation:flash .8s ease-out}
 .btn:disabled{opacity:.6;cursor:progress}
@@ -170,12 +185,14 @@ footer{margin-top:28px;font-size:.78rem;color:var(--muted)}
     <button role="tab" id="tab-race" aria-selected="true" type="button">The Race</button>
     <button role="tab" id="tab-sim" aria-selected="false" type="button">Simulator</button>
     <button role="tab" id="tab-path" aria-selected="false" type="button">Paths to 8th</button>
+    <button role="tab" id="tab-swap" aria-selected="false" type="button">Schedule Swap</button>
   </nav>
 
   <div class="rules">
     <span>Seeds 1–7 by record, points-for breaks ties. Seed 8 goes to the most points-for among everyone else.</span>
     <label><input type="checkbox" id="divToggle"> Division winners are guaranteed a top-7 seed</label>
   </div>
+  <div id="swapBanner"></div>
 
   <section id="view-race">
     <div class="leader" id="leader"></div>
@@ -239,6 +256,34 @@ footer{margin-top:28px;font-size:.78rem;color:var(--muted)}
         <p class="sub">Tap a team to make them win. Tap again to go back to simulated. Add a score to lock in that team's points too, which is what decides seed 8.</p>
         <div id="slate"></div>
       </div>
+    </div>
+  </section>
+
+  <section id="view-swap" hidden>
+    <div class="toolbar">
+      <label>Team <select id="swapA"></select></label>
+      <span class="mv">trades schedules with</span>
+      <label><select id="swapB"></select></label>
+      <label><input type="checkbox" id="swapAll"> Use this swap on the other tabs too</label>
+    </div>
+    <p class="sub" style="max-width:80ch">The two teams trade places in the schedule for the whole season. Every team keeps the points it actually scored each week; only the opponents change. That also changes the record of everyone who played them, so the standings and playoff odds below cover the whole league.</p>
+    <div class="swapcards" id="swapCards"></div>
+    <div class="stack" style="margin-top:20px">
+        <div class="panel">
+          <h2>Standings and playoff odds</h2>
+          <p class="sub" id="swapOddsSub">Real schedule vs swapped schedule.</p>
+          <div class="scroll"><table id="swapStand"></table></div>
+        </div>
+        <div class="panel">
+          <h2>Week by week</h2>
+          <p class="sub">Each team's real schedule next to the one they'd have after the swap. Upcoming weeks show the new opponent.</p>
+          <div class="scroll"><table class="swapweeks" id="swapWeeks"></table></div>
+        </div>
+        <div class="panel">
+          <h2 id="luckTitle">Every schedule</h2>
+          <p class="sub">The record this team would have right now with each other team's schedule. It shows how much schedule luck is in their record.</p>
+          <div class="scroll" style="max-width:560px"><table id="luckTable"></table></div>
+        </div>
     </div>
   </section>
 
@@ -693,16 +738,97 @@ function queueSim(){ clearTimeout(simTimer); simTimer = setTimeout(runSim, 250);
 
 function savePicks(){ store.set("picks:"+leagueId+":"+D.league.season, JSON.stringify(picks)); }
 
+// ---------- Schedule swap ----------
+let swapSel = null;      // {x, y} chosen in the Swap tab
+let swapGlobal = false;  // apply to the other tabs
+function swapGames(games, x, y){
+  if (!x || !y || x === y) return games;
+  const m = r => r === x ? y : (r === y ? x : r);
+  return games.map(g => { const a = m(g.a), b = m(g.b); if (a === g.a && b === g.b) return g;
+    return {...g, a, b, pa: g.done ? D.byRid[a].scores[g.week] : 0, pb: g.done ? D.byRid[b].scores[g.week] : 0, swapped:true}; });
+}
+function withGames(games, fn){ const saved = D.games; D.games = games; try { return fn(); } finally { D.games = saved; } }
+function applyGlobalSwap(){
+  D.games = (swapGlobal && swapSel) ? swapGames(D.baseGames, swapSel.x, swapSel.y) : D.baseGames;
+  $("#swapBanner").innerHTML = (swapGlobal && swapSel && swapSel.x !== swapSel.y)
+    ? `<div class="banner" style="margin:0 0 16px">Every tab is showing a what-if: <b>${esc(D.byRid[swapSel.x].name)}</b> and <b>${esc(D.byRid[swapSel.y].name)}</b> have traded schedules. <button class="btn" type="button" id="swapOff">Go back to the real schedule</button></div>` : "";
+  const off = $("#swapOff"); if (off) off.onclick = () => { swapGlobal = false; $("#swapAll").checked = false; applyGlobalSwap(); refreshAll(); };
+}
+function teamLog(T, games){
+  return games.filter(g => g.a === T || g.b === T).sort((p,q)=>p.week-q.week).map(g => { const me = g.a === T, opp = me ? g.b : g.a;
+    const ps = me ? g.pa : g.pb, os = me ? g.pb : g.pa;
+    return {week:g.week, opp, ps, os, done:g.done, res: !g.done ? "U" : ps > os ? "W" : ps < os ? "L" : "T"}; });
+}
+function renderSwap(){
+  if (!D) return;
+  const x = +$("#swapA").value, y = +$("#swapB").value;
+  swapSel = {x, y};
+  if (swapGlobal) { applyGlobalSwap(); }
+  const real = D.baseGames, sw = swapGames(real, x, y), wk = D.lastScored;
+  const R = withGames(real, () => recordThrough(wk)), S = withGames(sw, () => recordThrough(wk));
+  const sdR = seedTeams(R, D.teams), sdS = seedTeams(S, D.teams);
+  if (x === y){ $("#swapCards").innerHTML = `<div class="banner">Pick two different teams to trade schedules.</div>`; }
+  else $("#swapCards").innerHTML = [x, y].map(T => { const t = D.byRid[T], other = D.byRid[T===x?y:x];
+    const dw = S[T].w - R[T].w;
+    const seedTxt = s => s <= SEEDS_BY_RECORD ? `seed ${s}` : (s === SEEDS_BY_RECORD+1 ? "seed 8" : `${s}th, out`);
+    return `<div class="swapcard">${teamCell(t)}
+      <div class="recs"><div class="rec"><small>Real</small><b>${recStr(R[T])}</b></div><span class="arrow">→</span>
+      <div class="rec"><small>With ${esc(other.name.length>18?other.name.slice(0,17)+"…":other.name)}'s schedule</small><b>${recStr(S[T])}</b></div>
+      <span class="d ${dw>0?"up":dw<0?"dn":""}">${dw>0?"+":""}${dw} W</span></div>
+      <div class="line">Points against ${fmt(R[T].pa,2)} → <b>${fmt(S[T].pa,2)}</b>. Standing after week ${wk}: ${seedTxt(sdR.seedOf[T])} → <b>${seedTxt(sdS.seedOf[T])}</b>.</div></div>`; }).join("");
+
+  // week by week
+  const lr = {x:teamLog(x, real), y:teamLog(y, real)}, ls = {x:teamLog(x, sw), y:teamLog(y, sw)};
+  const weeks = [...new Set(real.map(g=>g.week))].sort((a,b)=>a-b);
+  const cell = (e, other) => { if (!e) return `<td>Bye</td>`;
+    const flip = other && other.done && e.done && other.res !== e.res;
+    return `<td class="${flip?"flip":""}"><span class="res ${e.res}">${e.res==="U"?"–":e.res}</span> ${esc(D.byRid[e.opp].name)}${e.done?` <span class="mv">${fmt(e.ps)}–${fmt(e.os)}</span>`:""}</td>`; };
+  const shortN = r => esc(D.byRid[r].name.length>16 ? D.byRid[r].name.slice(0,15)+"…" : D.byRid[r].name);
+  let h = `<thead><tr><th>Wk</th><th>${shortN(x)} real</th><th>${shortN(x)} swapped</th><th>${shortN(y)} real</th><th>${shortN(y)} swapped</th></tr></thead><tbody>`;
+  weeks.forEach(w => { const f = (arr) => arr.find(e=>e.week===w);
+    const a1=f(lr.x), a2=f(ls.x), b1=f(lr.y), b2=f(ls.y);
+    h += `<tr><td class="num">${w}</td>${cell(a1)}${cell(a2,a1)}${cell(b1)}${cell(b2,b1)}</tr>`; });
+  $("#swapWeeks").innerHTML = h + `</tbody><tfoot><tr><td colspan="5" class="sub" style="border:0">Outlined cells are weeks where the result flips.</td></tr></tfoot>`;
+
+  // schedule luck for team x
+  $("#luckTitle").textContent = `${D.byRid[x].name} with every schedule`;
+  const rows = D.teams.map(t => t.rid).map(o => { const g2 = o === x ? real : swapGames(real, x, o); const r = withGames(g2, () => recordThrough(wk))[x]; return {o, r}; })
+    .sort((p,q) => (q.r.w - p.r.w) || (p.r.pa - q.r.pa));
+  let lt = `<thead><tr><th>Schedule of</th><th class="c">Record</th><th class="r">vs real</th></tr></thead><tbody>`;
+  rows.forEach(({o, r}) => { const d = r.w - R[x].w;
+    lt += `<tr class="${o===x?"me":""}"><td>${o===x?"<b>Their own (real)</b>":esc(D.byRid[o].name)}</td><td class="c num">${recStr(r)}</td><td class="r"><span class="d ${d>0?"up":d<0?"dn":""}">${o===x?"—":(d>0?"+":"")+d}</span></td></tr>`; });
+  $("#luckTable").innerHTML = lt + "</tbody>";
+
+  // standings + odds, real vs swapped
+  const nS = 5000;
+  const oR = withGames(real, () => simulate(nS, 0.35, false, 7)).out, oS = withGames(sw, () => simulate(nS, 0.35, false, 7)).out;
+  const order = sdS.order;
+  let st = `<thead><tr><th>Seed</th><th>Team</th><th class="c">Real</th><th class="c">Swapped</th><th class="r">Playoffs real</th><th class="r">Swapped</th><th class="r">Seed 8 real</th><th class="r">Swapped</th></tr></thead><tbody>`;
+  order.forEach((r,i) => { const t = D.byRid[r], ds = sdR.seedOf[r] - sdS.seedOf[r], dm = oS[r].make - oR[r].make;
+    const pill = i<SEEDS_BY_RECORD ? `<span class="pill in">${i+1}</span>` : i===SEEDS_BY_RECORD ? `<span class="pill eight">8</span>` : `<span class="pill out">${i+1}</span>`;
+    const changed = R[r].w !== S[r].w;
+    st += `<tr class="${i===SEEDS_BY_RECORD-1?"cutline":""} ${r===x||r===y?"me":""}"><td>${pill} ${ds?`<span class="mv ${ds>0?"up":"dn"}">${ds>0?"▲":"▼"}${Math.abs(ds)}</span>`:""}</td><td>${teamCell(t)}</td>
+      <td class="c num">${recStr(R[r])}</td><td class="c num">${changed?`<b>${recStr(S[r])}</b>`:recStr(S[r])}</td>
+      <td class="r pct">${pct(oR[r].make)}</td><td class="r pct"><b>${pct(oS[r].make)}</b> ${Math.abs(dm)>=0.01?`<span class="d ${dm>0?"up":"dn"}">${dm>0?"+":""}${Math.round(dm*100)}</span>`:""}</td>
+      <td class="r pct">${pct(oR[r].eighth)}</td><td class="r pct">${pct(oS[r].eighth)}</td></tr>`; });
+  $("#swapStand").innerHTML = st + "</tbody>";
+  $("#swapOddsSub").textContent = `Sorted by the swapped standings after week ${wk}. Odds come from ${nS.toLocaleString()} simulations of the remaining weeks for each version, without your Simulator picks. Teams in bold had their record changed by the swap.`;
+}
+
 // ---------- Events ----------
 function setTab(which){
-  if (!["race","sim","path"].includes(which)) which = "race";
-  ["race","sim","path"].forEach(t => { $("#tab-"+t).setAttribute("aria-selected", t===which); $("#view-"+t).hidden = t!==which; });
+  if (!["race","sim","path","swap"].includes(which)) which = "race";
+  ["race","sim","path","swap"].forEach(t => { $("#tab-"+t).setAttribute("aria-selected", t===which); $("#view-"+t).hidden = t!==which; });
   store.set("tab", which);
-  if (which !== "race" && D) runSim();
+  if ((which === "sim" || which === "path") && D) runSim();
+  if (which === "swap" && D) renderSwap();
 }
 $("#tab-race").onclick = () => setTab("race");
 $("#tab-sim").onclick = () => setTab("sim");
 $("#tab-path").onclick = () => setTab("path");
+$("#tab-swap").onclick = () => setTab("swap");
+["#swapA","#swapB"].forEach(s => $(s).onchange = () => { store.set(s, $(s).value); renderSwap(); if (swapGlobal) refreshAll(); });
+$("#swapAll").onchange = e => { swapGlobal = e.target.checked; applyGlobalSwap(); refreshAll(); };
 $("#divToggle").onchange = e => { divMode = e.target.checked; store.set("divMode", divMode?"1":"0"); refreshAll(); };
 $("#runSim").onclick = runSim;
 ["#nSims","#formW","#focusTeam"].forEach(s => $(s).onchange = () => { if (s==="#focusTeam") store.set("focus", $(s).value); runSim(); });
@@ -737,6 +863,7 @@ function refreshAll(){
   raceOdds = simulate(10000, 0.35, false);
   renderRace(); renderSlate();
   if (!$("#view-sim").hidden || !$("#view-path").hidden) runSim();
+  if (!$("#view-swap").hidden) renderSwap();
 }
 
 async function boot(force){
@@ -745,7 +872,7 @@ async function boot(force){
   try { raw = await loadLive(); live = true; }
   catch(e){ errMsg = e && e.message || String(e); if (window.SNAPSHOT && window.SNAPSHOT.league && window.SNAPSHOT.league.league_id === leagueId) raw = window.SNAPSHOT; }
   if (!raw){ $("#srcText").textContent = "Couldn't load"; $("#msg").innerHTML = `<div class="banner err">Sleeper didn't answer (${esc(errMsg)}). Check your connection and press Refresh.</div>`; return; }
-  D = normalize(raw, live);
+  D = normalize(raw, live); D.baseGames = D.games;
   try { picks = JSON.parse(store.get("picks:"+leagueId+":"+D.league.season) || "{}") || {}; } catch(e){ picks = {}; }
   // drop picks for games that are now final
   Object.keys(picks).forEach(k => { const g = D.games.find(x=>x.week+":"+x.mid===k); if (!g || g.done) delete picks[k]; });
@@ -757,8 +884,13 @@ async function boot(force){
   const sel = $("#focusTeam"); const saved = +store.get("focus");
   sel.innerHTML = D.teams.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(t=>`<option value="${t.rid}">${esc(t.name)}</option>`).join("");
   sel.value = D.byRid[saved] ? saved : (raceOddsFocusDefault());
+  const opts = sel.innerHTML; $("#swapA").innerHTML = opts; $("#swapB").innerHTML = opts;
+  const sa = +store.get("#swapA"), sb = +store.get("#swapB");
+  $("#swapA").value = D.byRid[sa] ? sa : D.meRid;
+  $("#swapB").value = D.byRid[sb] ? sb : seedTeams(recordThrough(D.lastScored), D.teams).eighth;
+  swapSel = {x:+$("#swapA").value, y:+$("#swapB").value}; applyGlobalSwap();
   refreshAll();
-  if (!force && (store.get("tab") === "sim" || store.get("tab") === "path")) setTab(store.get("tab"));
+  if (!force && ["sim","path","swap"].includes(store.get("tab"))) setTab(store.get("tab"));
 }
 boot(false);
 })();

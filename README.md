@@ -9,6 +9,7 @@ League rule: seeds 1-7 go by record (points-for breaks ties). The 8th seed goes 
 - **The Race**: who holds seed 8 right now, the points-for gap for every team chasing it, seed-8 and top-7 odds, a week-by-week grid of where each team stood, and full standings.
 - **Simulator**: 10,000 Monte Carlo runs of the rest of the regular season. Tap a team to make them win a game, or type a score to lock in exact points. You get playoff odds, seed distribution, and the games that swing a chosen team's odds the most. Picks are saved in your browser.
 - **Paths to 8th**: a scenario board (one row per contender, one column per remaining week: opponent, the result that helps, typical score needed), a grid of playoff odds for every possible final record, and a card per team with its week-by-week path to seed 8 plus the other game results that help most. It uses the same simulations, including any picks you've made.
+- **Schedule Swap**: pick two teams and trade their schedules for the whole season. Everyone keeps the points they actually scored; only opponents change. Shows both teams' new records, a week-by-week comparison with flipped results outlined, league standings and playoff odds real vs swapped, and one team's record under every other team's schedule. A checkbox applies the swap to the other tabs too.
 
 It pulls live data from the public Sleeper API every time the page opens, so it updates itself each week. No server, no API key.
 
